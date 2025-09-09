@@ -1,0 +1,234 @@
+# PowerSync Sync Rules for Multi-User Chat System
+# These rules define what data each user should receive and when
+
+# Bucket definitions - organize data by access patterns
+bucket_definitions:
+  # Global data that all authenticated users can access
+  global:
+    # All users - needed for user discovery and chat participants
+    - SELECT * FROM users
+
+  # User-specific data - each user gets their own bucket
+  user_data:
+    # Chats that the user participates in
+    - SELECT chats.* FROM chats 
+      INNER JOIN chat_participants ON chats.id = chat_participants.chat_id 
+      WHERE chat_participants.user_id = REQUEST_USER_ID()
+    
+    # OR chats created by the user (in case they haven't been added as participant yet)
+    - SELECT * FROM chats WHERE created_by = REQUEST_USER_ID()
+
+  # Chat-specific data - separate bucket for each chat the user participates in
+  chat_data:
+    # Participants for chats the user is in
+    - SELECT chat_participants.* FROM chat_participants
+      WHERE EXISTS (
+        SELECT 1 FROM chat_participants my_participation 
+        WHERE my_participation.chat_id = chat_participants.chat_id 
+        AND my_participation.user_id = REQUEST_USER_ID()
+      )
+    
+    # Messages for chats the user participates in
+    - SELECT chat_messages.* FROM chat_messages
+      WHERE EXISTS (
+        SELECT 1 FROM chat_participants 
+        WHERE chat_participants.chat_id = chat_messages.room_id 
+        AND chat_participants.user_id = REQUEST_USER_ID()
+      )
+
+# Define sync rules for each table
+tables:
+  # Users table - global access for discovery
+  users:
+    # All authenticated users can read all users (for mentions, adding to chats, etc.)
+    - bucket: global
+      where: "true"
+    
+  # Chats table - user-specific access
+  chats:
+    # User gets chats they participate in
+    - bucket: user_data
+      where: |
+        EXISTS (
+          SELECT 1 FROM chat_participants 
+          WHERE chat_participants.chat_id = chats.id 
+          AND chat_participants.user_id = REQUEST_USER_ID()
+        )
+        OR chats.created_by = REQUEST_USER_ID()
+
+  # Chat participants - chat-specific access
+  chat_participants:
+    # User gets participants for chats they're in
+    - bucket: chat_data
+      where: |
+        EXISTS (
+          SELECT 1 FROM chat_participants my_participation 
+          WHERE my_participation.chat_id = chat_participants.chat_id 
+          AND my_participation.user_id = REQUEST_USER_ID()
+        )
+      
+  # Chat messages - chat-specific access
+  chat_messages:
+    # User gets messages from chats they participate in
+    - bucket: chat_data  
+      where: |
+        EXISTS (
+          SELECT 1 FROM chat_participants 
+          WHERE chat_participants.chat_id = chat_messages.room_id 
+          AND chat_participants.user_id = REQUEST_USER_ID()
+        )
+
+# Parameters for sync behavior
+parameters:
+  # Sync frequency settings
+  sync_interval: 1000  # 1 second for real-time feel
+  
+  # Batch settings for initial sync
+  initial_sync_batch_size: 100
+  incremental_sync_batch_size: 50
+  
+  # Connection settings
+  max_concurrent_connections: 5
+  connection_timeout: 30000  # 30 seconds
+  
+  # Data retention
+  local_data_retention_days: 30
+  
+  # Conflict resolution
+  conflict_resolution: "server_wins"  # Server always wins in conflicts
+
+# Real-time subscription settings
+subscriptions:
+  # Subscribe to changes in user's chats
+  user_chats:
+    table: chats
+    filter: |
+      EXISTS (
+        SELECT 1 FROM chat_participants 
+        WHERE chat_participants.chat_id = chats.id 
+        AND chat_participants.user_id = REQUEST_USER_ID()
+      )
+      OR chats.created_by = REQUEST_USER_ID()
+  
+  # Subscribe to messages in user's chats  
+  user_messages:
+    table: chat_messages
+    filter: |
+      EXISTS (
+        SELECT 1 FROM chat_participants 
+        WHERE chat_participants.chat_id = chat_messages.room_id 
+        AND chat_participants.user_id = REQUEST_USER_ID()
+      )
+  
+  # Subscribe to participant changes in user's chats
+  user_chat_participants:
+    table: chat_participants
+    filter: |
+      EXISTS (
+        SELECT 1 FROM chat_participants my_participation 
+        WHERE my_participation.chat_id = chat_participants.chat_id 
+        AND my_participation.user_id = REQUEST_USER_ID()
+      )
+
+# Security settings
+security:
+  # Require authentication for all operations
+  require_auth: true
+  
+  # Rate limiting to prevent abuse
+  rate_limits:
+    messages_per_minute: 60
+    chats_created_per_hour: 10
+    participants_added_per_minute: 20
+  
+  # Data validation
+  validation_rules:
+    chat_messages:
+      - field: content
+        max_length: 4000
+        required: true
+      - field: message_type
+        allowed_values: ['text', 'file', 'image', 'system', 'aiResponse', 'call']
+    
+    chats:
+      - field: type
+        allowed_values: ['direct', 'group', 'team', 'project', 'task']
+      - field: name
+        max_length: 255
+        
+    chat_participants:
+      - field: role
+        allowed_values: ['admin', 'member']
+
+# Performance optimizations
+optimizations:
+  # Index suggestions for better query performance
+  suggested_indexes:
+    - table: chat_participants
+      columns: [chat_id, user_id]
+      unique: true
+    - table: chat_messages
+      columns: [room_id, created_at]
+    - table: chats
+      columns: [updated_at]
+    - table: users
+      columns: [email]
+  
+  # Query hints for complex operations
+  query_hints:
+    # Optimize participant lookups
+    participant_lookup: |
+      /*+ USE_INDEX(chat_participants idx_chat_participants_chat_user) */
+    
+    # Optimize message queries
+    message_history: |
+      /*+ USE_INDEX(chat_messages idx_chat_messages_room_created) */
+
+# Webhook configurations for external integrations
+webhooks:
+  # Notify external services when important events happen
+  new_chat_created:
+    url: "${WEBHOOK_BASE_URL}/chat/created"
+    events: ["chats:INSERT"]
+    headers:
+      Authorization: "Bearer ${WEBHOOK_TOKEN}"
+  
+  new_message:
+    url: "${WEBHOOK_BASE_URL}/message/created"  
+    events: ["chat_messages:INSERT"]
+    headers:
+      Authorization: "Bearer ${WEBHOOK_TOKEN}"
+    # Only send webhooks for non-system messages
+    filter: "message_type != 'system'"
+
+# Development and debugging settings
+debug:
+  # Enable detailed logging in development
+  enable_query_logging: false
+  enable_sync_logging: false
+  enable_conflict_logging: true
+  
+  # Performance monitoring
+  track_sync_performance: true
+  track_query_performance: true
+  
+# Environment-specific overrides
+environments:
+  development:
+    debug:
+      enable_query_logging: true
+      enable_sync_logging: true
+    parameters:
+      sync_interval: 2000  # Slower sync in development
+  
+  staging:
+    parameters:
+      sync_interval: 1500
+      
+  production:
+    parameters:
+      sync_interval: 1000
+    security:
+      rate_limits:
+        messages_per_minute: 100  # Higher limits in production
+        chats_created_per_hour: 20

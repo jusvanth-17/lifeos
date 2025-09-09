@@ -1,0 +1,85 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(resource) {
+      return isAuthenticated() && request.auth.uid == resource.data.owner_id;
+    }
+    
+    function isTeamMember(teamId) {
+      return isAuthenticated() && 
+        exists(/databases/$(database)/documents/teams/$(teamId)) &&
+        request.auth.uid in get(/databases/$(database)/documents/teams/$(teamId)).data.member_ids;
+    }
+    
+    // Users collection
+    match /users/{userId} {
+      allow read, write: if isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // Teams collection
+    match /teams/{teamId} {
+      allow read: if isAuthenticated() && isTeamMember(teamId);
+      allow write: if isAuthenticated() && 
+        (request.auth.uid == resource.data.created_by || 
+         request.auth.uid in resource.data.admin_ids);
+    }
+    
+    // Projects collection
+    match /projects/{projectId} {
+      allow read: if isAuthenticated() && 
+        (isOwner(resource) || isTeamMember(resource.data.team_id));
+      allow write: if isAuthenticated() && 
+        (isOwner(resource) || isTeamMember(resource.data.team_id));
+    }
+    
+    // Tasks collection
+    match /tasks/{taskId} {
+      allow read: if isAuthenticated() && 
+        (isOwner(resource) || 
+         request.auth.uid in resource.data.quest_team[].user_id ||
+         isTeamMember(get(/databases/$(database)/documents/projects/$(resource.data.project_id)).data.team_id));
+      allow write: if isAuthenticated() && 
+        (isOwner(resource) || 
+         request.auth.uid in resource.data.quest_team[].user_id);
+    }
+    
+    // Goals collection
+    match /goals/{goalId} {
+      allow read, write: if isAuthenticated() && isOwner(resource);
+    }
+    
+    // Documents collection
+    match /documents/{documentId} {
+      allow read: if isAuthenticated() && 
+        (isOwner(resource) || 
+         request.auth.uid in resource.data.collaborator_ids ||
+         request.auth.uid in resource.data.viewer_ids ||
+         request.auth.uid in resource.data.editor_ids);
+      allow write: if isAuthenticated() && 
+        (isOwner(resource) || 
+         request.auth.uid in resource.data.editor_ids);
+    }
+    
+    // Chat rooms collection
+    match /chat_rooms/{chatRoomId} {
+      allow read, write: if isAuthenticated() && 
+        request.auth.uid in resource.data.participant_ids;
+      
+      // Chat messages subcollection
+      match /messages/{messageId} {
+        allow read: if isAuthenticated() && 
+          request.auth.uid in get(/databases/$(database)/documents/chat_rooms/$(chatRoomId)).data.participant_ids;
+        allow create: if isAuthenticated() && 
+          request.auth.uid in get(/databases/$(database)/documents/chat_rooms/$(chatRoomId)).data.participant_ids &&
+          request.auth.uid == request.resource.data.sender_id;
+        allow update: if isAuthenticated() && 
+          request.auth.uid == resource.data.sender_id;
+      }
+    }
+  }
+}
