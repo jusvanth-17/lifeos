@@ -7,6 +7,7 @@ import os
 import uuid
 import base64
 import secrets
+import jwt
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Any
 
@@ -30,17 +31,18 @@ class AuthService:
         # Mock user data
         if email in self._users:
             user_data = self._users[email]
+            profile = UserProfile(**user_data["profile"])
             return User(
                 id=user_data["id"],
                 email=user_data["email"],
-                display_name=user_data["display_name"],
-                created_at=user_data["created_at"],
-                updated_at=user_data["updated_at"]
+                profile=profile,
+                created_at=datetime.fromisoformat(user_data["created_at"]),
+                updated_at=datetime.fromisoformat(user_data["updated_at"])
             )
         
         return None
     
-    async def create_user(self, email: str, display_name: str, password: str) -> Optional[User]:
+    async def create_user(self, email: str, display_name: str, password: str = None) -> Optional[User]:
         """Create a new user (mock implementation)"""
         print(f"Mock user creation for: {email}")
         
@@ -51,14 +53,17 @@ class AuthService:
         
         # Create mock user
         user_id = str(uuid.uuid4())
-        now = datetime.utcnow().isoformat()
+        now = datetime.utcnow()
+        
+        # Create user profile
+        profile = UserProfile(display_name=display_name)
         
         user_data = {
             "id": user_id,
             "email": email,
-            "display_name": display_name,
-            "created_at": now,
-            "updated_at": now
+            "profile": profile.dict(),
+            "created_at": now.isoformat(),
+            "updated_at": now.isoformat()
         }
         
         self._users[email] = user_data
@@ -66,7 +71,7 @@ class AuthService:
         return User(
             id=user_id,
             email=email,
-            display_name=display_name,
+            profile=profile,
             created_at=now,
             updated_at=now
         )
@@ -75,12 +80,13 @@ class AuthService:
         """Get user by ID (mock implementation)"""
         for user_data in self._users.values():
             if user_data["id"] == user_id:
+                profile = UserProfile(**user_data["profile"])
                 return User(
                     id=user_data["id"],
                     email=user_data["email"],
-                    display_name=user_data["display_name"],
-                    created_at=user_data["created_at"],
-                    updated_at=user_data["updated_at"]
+                    profile=profile,
+                    created_at=datetime.fromisoformat(user_data["created_at"]),
+                    updated_at=datetime.fromisoformat(user_data["updated_at"])
                 )
         return None
     
@@ -188,13 +194,78 @@ class AuthService:
             if challenge_id in self._challenges:
                 del self._challenges[challenge_id]
             
+            profile = UserProfile(**user_data["profile"])
             return User(
                 id=user_data["id"],
                 email=user_data["email"],
-                display_name=user_data["display_name"],
-                created_at=user_data["created_at"],
-                updated_at=user_data["updated_at"]
+                profile=profile,
+                created_at=datetime.fromisoformat(user_data["created_at"]),
+                updated_at=datetime.fromisoformat(user_data["updated_at"])
             )
+        
+        return None
+
+
+    # JWT Token Management Methods
+    def create_access_token(self, user_id: str, expires_delta: Optional[timedelta] = None) -> str:
+        """Create JWT access token"""
+        if expires_delta:
+            expire = datetime.utcnow() + expires_delta
+        else:
+            expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        
+        to_encode = {
+            "sub": user_id,
+            "exp": expire,
+            "type": "access"
+        }
+        
+        encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+        return encoded_jwt
+    
+    def decode_access_token(self, token: str) -> Optional[Dict[str, Any]]:
+        """Decode JWT access token"""
+        try:
+            payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+            return payload
+        except jwt.PyJWTError:
+            return None
+    
+    async def get_current_user(self, token: str) -> Optional[User]:
+        """Get current user from JWT token"""
+        payload = self.decode_access_token(token)
+        if payload is None:
+            return None
+        
+        user_id = payload.get("sub")
+        if user_id is None:
+            return None
+        
+        return await self.get_user_by_id(user_id)
+    
+    # API-Expected Method Wrappers
+    async def start_webauthn_registration(self, user_id: str, email: str, display_name: str) -> Dict[str, Any]:
+        """Start WebAuthn registration process (API wrapper)"""
+        return await self.register_webauthn_begin(user_id)
+    
+    async def complete_webauthn_registration(self, user_id: str, credential_data: Dict[str, Any]) -> bool:
+        """Complete WebAuthn registration process (API wrapper)"""
+        # Extract challenge_id from credential if available, otherwise use a mock one
+        challenge_id = f"reg_{user_id}_{int(datetime.utcnow().timestamp())}"
+        return await self.register_webauthn_complete(user_id, credential_data, challenge_id)
+    
+    async def start_webauthn_authentication(self, email: str) -> Dict[str, Any]:
+        """Start WebAuthn authentication process (API wrapper)"""
+        return await self.authenticate_webauthn_begin(email)
+    
+    async def complete_webauthn_authentication(self, email: str, credential_data: Dict[str, Any]) -> Optional[str]:
+        """Complete WebAuthn authentication process and return JWT token"""
+        challenge_id = f"auth_{email}_{int(datetime.utcnow().timestamp())}"
+        user = await self.authenticate_webauthn_complete(email, credential_data, challenge_id)
+        
+        if user:
+            # Generate JWT token for authenticated user
+            return self.create_access_token(user.id)
         
         return None
 

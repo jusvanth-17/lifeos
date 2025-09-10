@@ -61,8 +61,8 @@ class _ChatRoomsScreenState extends ConsumerState<ChatRoomsScreen>
             ),
           );
         },
-        child: const Icon(Icons.add),
         tooltip: 'Create New Chat',
+        child: const Icon(Icons.add),
       ),
     );
   }

@@ -28,6 +28,9 @@ httpx==0.25.2
 celery==5.3.4
 redis==5.0.1
 
+# Agora Token Generation
+agora-token-builder==1.0.0
+
 # Development
 pytest==7.4.3
 pytest-asyncio==0.21.1

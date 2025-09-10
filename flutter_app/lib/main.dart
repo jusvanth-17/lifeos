@@ -15,6 +15,8 @@ import 'providers/theme_provider.dart';
 import 'widgets/layout/four_panel_layout.dart';
 import 'widgets/common/no_transition_page.dart';
 import 'services/power_sync_service.dart';
+import 'services/chat_service.dart';
+import 'services/database_migration.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -88,6 +90,20 @@ class LifeOSApp extends ConsumerWidget {
       await PowerSyncService.instance.initialize();
       print('✅ PowerSync database initialized successfully');
 
+      // Step 3.5: Check for database schema migration
+      try {
+        print('🔄 Checking database schema migration...');
+        final migrationPerformed = await DatabaseMigration.checkAndMigrate();
+        if (migrationPerformed) {
+          print('✅ Database schema migration completed');
+        } else {
+          print('✅ Database schema is up to date');
+        }
+      } catch (migrationError) {
+        print('❌ Database migration failed: $migrationError');
+        print('Continuing with existing schema - call functionality may be limited');
+      }
+
       // Test PowerSync extension loading
       try {
         print('🧪 Testing PowerSync extension...');
@@ -122,6 +138,17 @@ class LifeOSApp extends ConsumerWidget {
           // Trigger post-authentication sync to ensure users are synced locally
           await PowerSyncService.instance.triggerPostAuthSync();
           print('✅ PowerSync post-auth sync completed');
+
+          // Step 5: Initialize ChatService real-time subscriptions
+          try {
+            final currentUser = Supabase.instance.client.auth.currentUser;
+            if (currentUser != null) {
+              await ChatService.instance.initializeRealTimeSubscriptions(currentUser.id);
+              print('✅ ChatService real-time subscriptions initialized');
+            }
+          } catch (chatError) {
+            print('❌ ChatService initialization failed: $chatError');
+          }
         } catch (connectError) {
           print('❌ PowerSync connection failed: $connectError');
         }

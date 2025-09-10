@@ -4,6 +4,7 @@ import 'package:agora_rtc_engine/agora_rtc_engine.dart';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../../models/chat.dart';
+import '../../../services/agora_service.dart';
 
 class CallPage extends StatefulWidget {
   final String sessionId;
@@ -33,10 +34,13 @@ class _CallPageState extends State<CallPage> {
   bool _isVideoOff = false;
   bool _isScreenSharing = false;
   int? _remoteUid;
+  bool _isConnecting = true;
+  String _connectionStatus = 'Connecting to call...';
 
-  // Replace with your own values
-  final String _appId = "88f1741521a941778d07e17a48890191";
-  final String _tempToken = "007eJxTYMg9H3fYbs/2Pxy7luvxlkSu5fq85uXlOC7xR3IM3m0FKgcVGCws0gzNTQxNjQwTLU0Mzc0tUgzMUw3NE00sLCwNDC0N3Rfvz2gIZGSYO+syAyMUgvgsDCWpxSUMDAAQ/R57";
+  // Agora configuration
+  String? _appId;
+  String? _currentToken;
+  AgoraTokenResponse? _tokenResponse;
   final String _iosAppGroup = "group.com.jusvanthraja.agora";
 
   @override
@@ -53,48 +57,168 @@ class _CallPageState extends State<CallPage> {
 
   Future<void> _initializeRtc() async {
     try {
+      setState(() {
+        _connectionStatus = 'Requesting permissions...';
+      });
+
+      // Request permissions
       if (Platform.isAndroid || Platform.isIOS) {
         await [Permission.microphone, Permission.camera].request();
       }
 
+      setState(() {
+        _connectionStatus = 'Generating token...';
+      });
+
+      // Generate dynamic token
+      try {
+        _tokenResponse = await AgoraService.instance.generateToken(
+          channelName: widget.sessionId,
+          uid: 0,
+          role: 'publisher',
+          expiryTime: 3600, // 1 hour
+        );
+        _appId = _tokenResponse!.appId;
+        _currentToken = _tokenResponse!.token;
+        
+        debugPrint("✅ Dynamic token generated: ${_currentToken!.substring(0, 20)}...");
+      } catch (e) {
+        setState(() {
+          _connectionStatus = 'Token generation failed: $e';
+          _isConnecting = false;
+        });
+        return;
+      }
+
+      setState(() {
+        _connectionStatus = 'Initializing RTC engine...';
+      });
+
+      // Initialize RTC engine
       _rtcEngine = createAgoraRtcEngine();
-      await _rtcEngine!.initialize(RtcEngineContext(appId: _appId));
-      await _rtcEngine!.enableVideo();
+      await _rtcEngine!.initialize(RtcEngineContext(appId: _appId!));
+      
+      if (widget.callType == CallType.video) {
+        await _rtcEngine!.enableVideo();
+      } else {
+        await _rtcEngine!.disableVideo();
+      }
+      
       await _rtcEngine!.setClientRole(role: ClientRoleType.clientRoleBroadcaster);
 
+      // Set up event handlers
       _rtcEngine!.registerEventHandler(RtcEngineEventHandler(
         onJoinChannelSuccess: (connection, elapsed) {
-          debugPrint("✅ RTC: Joined channel");
-          setState(() => _isJoined = true);
-          _rtcEngine!.startPreview();
+          debugPrint("✅ RTC: Joined channel successfully");
+          setState(() {
+            _isJoined = true;
+            _isConnecting = false;
+            _connectionStatus = 'Connected';
+          });
+          if (widget.callType == CallType.video) {
+            _rtcEngine!.startPreview();
+          }
         },
         onLeaveChannel: (connection, stats) {
           debugPrint("✅ RTC: Left channel");
+          setState(() {
+            _isJoined = false;
+          });
           if (_isScreenSharing) {
             _toggleScreenShare();
           }
-          setState(() => _isJoined = false);
           _rtcEngine!.stopPreview();
         },
         onUserJoined: (connection, uid, elapsed) {
           debugPrint("👤 RTC: Remote user $uid joined");
-          setState(() => _remoteUid = uid);
+          setState(() {
+            _remoteUid = uid;
+          });
         },
         onUserOffline: (connection, uid, reason) {
           debugPrint("👤 RTC: Remote user $uid left");
-          setState(() => _remoteUid = null);
+          setState(() {
+            _remoteUid = null;
+          });
+        },
+        onTokenPrivilegeWillExpire: (connection, token) async {
+          debugPrint("⚠️ Token will expire, refreshing...");
+          await _refreshToken();
+        },
+        onError: (err, msg) {
+          debugPrint("❌ RTC Error: $err - $msg");
+          setState(() {
+            _connectionStatus = 'Connection error: $msg';
+          });
         },
       ));
 
+      setState(() {
+        _connectionStatus = 'Joining channel...';
+      });
+
+      // Join channel with dynamic token
       await _rtcEngine!.joinChannel(
-        token: _tempToken,
+        token: _currentToken!,
         channelId: widget.sessionId,
         options: const ChannelMediaOptions(publishScreenTrack: false),
         uid: 0,
       );
     } catch (e) {
       debugPrint("❌ RTC initialization error: $e");
+      setState(() {
+        _connectionStatus = 'Failed to initialize: $e';
+        _isConnecting = false;
+      });
+      
+      // Show error dialog
+      if (mounted) {
+        _showErrorDialog('Call Failed', 'Failed to connect to the call: $e');
+      }
     }
+  }
+
+  /// Refresh the Agora token when it's about to expire
+  Future<void> _refreshToken() async {
+    try {
+      final newTokenResponse = await AgoraService.instance.refreshToken(
+        channelName: widget.sessionId,
+        uid: 0,
+        role: 'publisher',
+        expiryTime: 3600,
+      );
+      
+      _tokenResponse = newTokenResponse;
+      _currentToken = newTokenResponse.token;
+      
+      // Update the token in the channel
+      await _rtcEngine!.renewToken(_currentToken!);
+      debugPrint("✅ Token refreshed successfully");
+    } catch (e) {
+      debugPrint("❌ Failed to refresh token: $e");
+    }
+  }
+
+  /// Show error dialog
+  void _showErrorDialog(String title, String message) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text(title),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop(); // Close dialog
+                Navigator.of(context).pop(); // Close call screen
+              },
+              child: const Text('OK'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Future<void> _disposeRtc() async {
@@ -197,16 +321,19 @@ class _CallPageState extends State<CallPage> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const CircularProgressIndicator(
-            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-          ),
-          const SizedBox(height: 20),
+          if (_isConnecting) ...[
+            const CircularProgressIndicator(
+              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+            ),
+            const SizedBox(height: 20),
+          ],
           Text(
-            'Connecting to call...',
+            _connectionStatus,
             style: TextStyle(
               color: Colors.white.withOpacity(0.8),
               fontSize: 16,
             ),
+            textAlign: TextAlign.center,
           ),
           const SizedBox(height: 10),
           Text(
@@ -216,6 +343,19 @@ class _CallPageState extends State<CallPage> {
               fontSize: 12,
             ),
           ),
+          if (!_isConnecting && !_isJoined) ...[
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: () {
+                setState(() {
+                  _isConnecting = true;
+                  _connectionStatus = 'Retrying...';
+                });
+                _initializeRtc();
+              },
+              child: const Text('Retry'),
+            ),
+          ],
         ],
       ),
     );

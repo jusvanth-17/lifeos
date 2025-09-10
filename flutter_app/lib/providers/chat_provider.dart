@@ -4,6 +4,7 @@ import 'dart:math';
 import '../models/chat.dart';
 import '../services/chat_service.dart';
 import '../services/power_sync_service.dart';
+import '../services/agora_service.dart';
 import '../providers/supabase_auth_provider.dart';
 
 enum CallScreenState {
@@ -339,30 +340,51 @@ class ChatNotifier extends StateNotifier<ChatState> {
     if (user == null) return;
 
     try {
-      // Generate unique session ID
-      final sessionId = _generateCallSessionId(state.selectedChat!);
-      
-      // Get call participants
-      final callParticipants = state.participants.map((p) => p.id).toList();
-      
-      // Update state with call session ID
+      // Set initial ringing state
       state = state.copyWith(
-        currentCallSessionId: sessionId,
         callState: CallState(
           screenState: CallScreenState.ringing,
           callType: callType,
           startTime: DateTime.now(),
           isVideoEnabled: callType == CallType.video,
-          participants: callParticipants,
+          participants: state.participants.map((p) => p.id).toList(),
+        ),
+      );
+
+      // Authenticate with backend first
+      print('🔐 Authenticating with backend for call...');
+      final token = await AgoraService.instance.authenticateWithBackend(
+        email: user.email,
+        displayName: user.displayName ?? user.email,
+      );
+
+      if (token == null) {
+        throw Exception('Failed to authenticate with backend');
+      }
+
+      print('✅ Authentication successful, starting call...');
+
+      // Start call session with AgoraService
+      final callSession = await AgoraService.instance.startCall(
+        chatRoomId: state.selectedChat!.id,
+        callType: callType == CallType.video ? 'video' : 'voice',
+      );
+      
+      // Update state with successful call session
+      state = state.copyWith(
+        currentCallSessionId: callSession.sessionId,
+        callState: state.callState.copyWith(
+          screenState: CallScreenState.connected,
         ),
       );
 
       // Send call invitation message to all participants
-      await _sendCallInvitation(sessionId, callType, callParticipants);
+      await _sendCallInvitation(callSession.sessionId, callType, callSession.participants);
 
-      // The actual navigation to CallPage will be handled by the UI layer
+      print('✅ Call initiated successfully: ${callSession.sessionId}');
       
     } catch (e) {
+      print('❌ Error initiating call: $e');
       state = state.copyWith(
         error: 'Failed to initiate call: $e',
         callState: const CallState(),
@@ -484,6 +506,59 @@ class ChatNotifier extends StateNotifier<ChatState> {
         isScreenSharing: !state.callState.isScreenSharing,
       ),
     );
+  }
+
+  Future<void> joinCall(String sessionId) async {
+    final authState = _ref.read(authProvider);
+    final user = authState.user;
+    if (user == null) return;
+
+    try {
+      // Set initial ringing state
+      state = state.copyWith(
+        callState: CallState(
+          screenState: CallScreenState.ringing,
+          callType: CallType.voice, // Will be updated with actual call type
+          startTime: DateTime.now(),
+          participants: state.participants.map((p) => p.id).toList(),
+        ),
+      );
+
+      // Authenticate with backend first
+      print('🔐 Authenticating with backend to join call...');
+      final token = await AgoraService.instance.authenticateWithBackend(
+        email: user.email,
+        displayName: user.displayName ?? user.email,
+      );
+
+      if (token == null) {
+        throw Exception('Failed to authenticate with backend');
+      }
+
+      print('✅ Authentication successful, joining call...');
+
+      // Join call session with AgoraService
+      final joinResponse = await AgoraService.instance.joinCall(
+        sessionId: sessionId,
+      );
+      
+      // Update state with successful call join
+      state = state.copyWith(
+        currentCallSessionId: sessionId,
+        callState: state.callState.copyWith(
+          screenState: CallScreenState.connected,
+        ),
+      );
+
+      print('✅ Successfully joined call: $sessionId');
+      
+    } catch (e) {
+      print('❌ Error joining call: $e');
+      state = state.copyWith(
+        error: 'Failed to join call: $e',
+        callState: const CallState(),
+      );
+    }
   }
 
   void clearSelectedChat() {

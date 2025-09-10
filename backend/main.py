@@ -17,6 +17,7 @@ from app.api.tasks import router as tasks_router
 from app.api.chat import router as chat_router
 from app.api.documents import router as documents_router
 from app.api.ai import router as ai_router
+from app.api.agora import router as agora_router
 
 
 @asynccontextmanager
@@ -60,6 +61,7 @@ app.include_router(tasks_router, prefix="/api/v1/tasks", tags=["tasks"])
 app.include_router(chat_router, prefix="/api/v1/chat", tags=["chat"])
 app.include_router(documents_router, prefix="/api/v1/documents", tags=["documents"])
 app.include_router(ai_router, prefix="/api/v1/ai", tags=["ai"])
+app.include_router(agora_router, prefix="/api/v1/agora", tags=["agora"])
 
 
 @app.get("/")

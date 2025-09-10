@@ -51,8 +51,21 @@ class _CreateChatScreenState extends ConsumerState<CreateChatScreen> {
     });
 
     try {
+      // Enhanced search - support both name and email
       final userService = UserService.instance;
-      final users = await userService.searchUsers(query);
+      List<User> users = [];
+      
+      // If query looks like an email, search by email first
+      if (_isValidEmail(query)) {
+        users = await userService.searchUsersByEmail(query);
+        if (users.isEmpty) {
+          // If no exact email match, fall back to general search
+          users = await userService.searchUsers(query);
+        }
+      } else {
+        // Search by name first, then email
+        users = await userService.searchUsers(query);
+      }
 
       setState(() {
         _searchResults = users
@@ -71,6 +84,87 @@ class _CreateChatScreenState extends ConsumerState<CreateChatScreen> {
         );
       }
     }
+  }
+
+  /// Check if a string is a valid email format
+  bool _isValidEmail(String email) {
+    return RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(email);
+  }
+
+  /// Handle email-based user invitation for users not on platform
+  Future<void> _handleEmailInvitation(String email) async {
+    try {
+      // Check if user with email already exists
+      final existingUsers = await UserService.instance.searchUsersByEmail(email);
+      
+      if (existingUsers.isNotEmpty) {
+        // User exists, add them directly
+        _addUser(existingUsers.first);
+        return;
+      }
+
+      // Show invitation dialog
+      final shouldInvite = await _showInviteDialog(email);
+      if (shouldInvite == true) {
+        // Create placeholder user for invitation
+        final invitedUser = User(
+          id: 'invited_$email', // Temporary ID for invited users
+          email: email,
+          displayName: email.split('@')[0], // Use email prefix as display name
+        );
+
+        _addUser(invitedUser);
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('$email will be invited to join the chat'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error handling email invitation: $e')),
+        );
+      }
+    }
+  }
+
+  /// Show dialog to confirm user invitation
+  Future<bool?> _showInviteDialog(String email) async {
+    return showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Invite User'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('$email is not on this platform yet.'),
+              const SizedBox(height: 8),
+              const Text('Would you like to invite them to this chat?'),
+              const SizedBox(height: 16),
+              const Text(
+                'They will receive an invitation and can join the chat once they sign up.',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Invite'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   void _addUser(User user) {

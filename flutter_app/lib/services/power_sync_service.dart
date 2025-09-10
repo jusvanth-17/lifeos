@@ -6,14 +6,19 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/constants/app_constants.dart';
 
 // Define the PowerSync database schema
+// Note: PowerSync automatically adds an 'id' column to every table, so we don't define custom id columns
 const schema = Schema([
   // Users table
   Table('users', [
+    Column.text('supabase_id'), // Store original Supabase user ID
     Column.text('email'),
     Column.text('display_name'),
     Column.text('avatar_url'),
     Column.text('created_at'),
     Column.text('updated_at'),
+  ], indexes: [
+    Index('users_supabase_id', [IndexedColumn('supabase_id')]),
+    Index('users_email', [IndexedColumn('email')]),
   ]),
 
   // Projects table
@@ -81,6 +86,7 @@ const schema = Schema([
     Column.integer('is_online'),
     Column.text('last_seen'),
     Column.integer('is_typing'),
+    Column.text('role'), // Add role column to match Supabase schema
     Column.text('joined_at'),
   ], indexes: [
     Index('chat_participants_chat', [IndexedColumn('chat_id')]),
@@ -484,53 +490,9 @@ class PowerSyncService {
     try {
       print('🔄 PowerSync: Starting manual user sync from Supabase...');
 
-      // Fetch users from Supabase
-      final response = await Supabase.instance.client
-          .from('users')
-          .select('id, email, display_name, avatar_url, created_at, updated_at')
-          .limit(100);
-
-      final users = List<Map<String, dynamic>>.from(response);
-      print('🔄 PowerSync: Found ${users.length} users in Supabase');
-
-      // Sync each user to local database
-      for (final userData in users) {
-        try {
-          final now = DateTime.now().toIso8601String();
-
-          // Check if user exists locally
-          final existingUser = await get(
-            'SELECT * FROM users WHERE id = ?',
-            [userData['id']],
-          );
-
-          if (existingUser != null) {
-            // Update existing user
-            await update(
-                'users',
-                {
-                  'email': userData['email'] ?? '',
-                  'display_name': userData['display_name'] ?? 'Unknown User',
-                  'avatar_url': userData['avatar_url'],
-                  'updated_at': now,
-                },
-                where: 'id = ?',
-                whereArgs: [userData['id']]);
-          } else {
-            // Insert new user
-            await insert('users', {
-              'id': userData['id'],
-              'email': userData['email'] ?? '',
-              'display_name': userData['display_name'] ?? 'Unknown User',
-              'avatar_url': userData['avatar_url'],
-              'created_at': userData['created_at'] ?? now,
-              'updated_at': now,
-            });
-          }
-        } catch (e) {
-          print('❌ PowerSync: Error syncing user ${userData['id']}: $e');
-        }
-      }
+      // Note: PowerSync will automatically sync data from Supabase based on sync rules
+      // This method is kept for backward compatibility but PowerSync handles sync automatically
+      print('ℹ️ PowerSync handles user sync automatically via sync rules');
 
       print('✅ PowerSync: User sync completed successfully');
     } catch (e) {
@@ -549,56 +511,13 @@ class PowerSyncService {
     try {
       print('🔄 PowerSync: Starting post-authentication sync...');
 
-      // Sync users from Supabase
-      await syncUsersFromSupabase();
-
-      // Sync current user data
-      final currentUser = Supabase.instance.client.auth.currentUser;
-      if (currentUser != null) {
-        await _syncCurrentUser(currentUser);
-      }
+      // PowerSync automatically syncs data based on sync rules once connected
+      print('ℹ️ PowerSync will automatically sync data based on configured sync rules');
 
       print('✅ PowerSync: Post-authentication sync completed');
     } catch (e) {
       print('❌ PowerSync: Post-authentication sync failed: $e');
       // Don't rethrow - this is a background operation
-    }
-  }
-
-  /// Sync current authenticated user
-  Future<void> _syncCurrentUser(User currentUser) async {
-    try {
-      final now = DateTime.now().toIso8601String();
-      final userData = {
-        'id': currentUser.id,
-        'email': currentUser.email ?? '',
-        'display_name': currentUser.userMetadata?['display_name'] ??
-            currentUser.userMetadata?['full_name'] ??
-            currentUser.email?.split('@').first ??
-            'Unknown User',
-        'avatar_url': currentUser.userMetadata?['avatar_url'],
-        'updated_at': now,
-      };
-
-      // Check if user exists locally
-      final existingUser = await get(
-        'SELECT * FROM users WHERE id = ?',
-        [currentUser.id],
-      );
-
-      if (existingUser != null) {
-        // Update existing user
-        await update('users', userData,
-            where: 'id = ?', whereArgs: [currentUser.id]);
-      } else {
-        // Insert new user
-        userData['created_at'] = now;
-        await insert('users', userData);
-      }
-
-      print('✅ PowerSync: Current user synced successfully');
-    } catch (e) {
-      print('❌ PowerSync: Error syncing current user: $e');
     }
   }
 

@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/constants/app_constants.dart';
 import '../../providers/navigation_provider.dart';
 import '../../providers/copilot_provider.dart';
-import '../../providers/theme_provider.dart';
 import 'collapsed_primary_sidebar.dart';
 import 'secondary_sidebar.dart';
 import 'copilot_panel.dart';

@@ -11,18 +11,38 @@ class UserService {
   final PowerSyncService _powerSync = PowerSyncService.instance;
   final Uuid _uuid = const Uuid();
 
-  /// Create a new user
+  /// Ensure PowerSync is initialized before performing operations
+  Future<void> _ensurePowerSyncReady() async {
+    if (!_powerSync.isInitialized) {
+      print('⏳ UserService: PowerSync not yet initialized, waiting...');
+      // Wait for PowerSync to be initialized
+      int attempts = 0;
+      while (!_powerSync.isInitialized && attempts < 30) {
+        await Future.delayed(const Duration(milliseconds: 100));
+        attempts++;
+      }
+      
+      if (!_powerSync.isInitialized) {
+        throw Exception('PowerSync initialization timeout - could not initialize within 3 seconds');
+      }
+      print('✅ UserService: PowerSync is now ready');
+    }
+  }
+
+  /// Create a new user (PowerSync will auto-generate the ID)
   Future<User?> createUser({
+    required String supabaseId,
     required String email,
     required String displayName,
     String? avatarUrl,
   }) async {
     try {
-      final userId = _uuid.v4();
+      await _ensurePowerSyncReady();
+      
       final now = DateTime.now();
 
       final userData = {
-        'id': userId,
+        'supabase_id': supabaseId,
         'email': email,
         'display_name': displayName,
         'avatar_url': avatarUrl,
@@ -32,27 +52,24 @@ class UserService {
 
       await _powerSync.insert('users', userData);
 
-      return User(
-        id: userId,
-        email: email,
-        displayName: displayName,
-        avatarUrl: avatarUrl,
-        createdAt: now,
-        updatedAt: now,
-      );
+      // Get the created user to retrieve PowerSync-generated ID
+      final createdUser = await getUserBySupabaseId(supabaseId);
+      return createdUser;
     } catch (e) {
       print('Error creating user: $e');
       return null;
     }
   }
 
-  /// Get user by ID
-  Future<User?> getUserById(String userId) async {
+  /// Get user by PowerSync auto-generated ID
+  Future<User?> getUserById(String powersyncId) async {
     try {
+      await _ensurePowerSyncReady();
+      
       final results = await _powerSync.query(
         'users',
         where: 'id = ?',
-        whereArgs: [userId],
+        whereArgs: [powersyncId],
         limit: 1,
       );
 
@@ -65,9 +82,32 @@ class UserService {
     }
   }
 
+  /// Get user by original Supabase ID
+  Future<User?> getUserBySupabaseId(String supabaseId) async {
+    try {
+      await _ensurePowerSyncReady();
+      
+      final results = await _powerSync.query(
+        'users',
+        where: 'supabase_id = ?',
+        whereArgs: [supabaseId],
+        limit: 1,
+      );
+
+      if (results.isEmpty) return null;
+
+      return _mapRowToUser(results.first);
+    } catch (e) {
+      print('Error getting user by Supabase ID: $e');
+      return null;
+    }
+  }
+
   /// Get user by email
   Future<User?> getUserByEmail(String email) async {
     try {
+      await _ensurePowerSyncReady();
+      
       final results = await _powerSync.query(
         'users',
         where: 'email = ?',
@@ -87,6 +127,8 @@ class UserService {
   /// Search users by name or email
   Future<List<User>> searchUsers(String query) async {
     try {
+      await _ensurePowerSyncReady();
+      
       final results = await _powerSync.query(
         'users',
         where: 'display_name LIKE ? OR email LIKE ?',
@@ -102,18 +144,42 @@ class UserService {
     }
   }
 
+  /// Search users specifically by email (exact and partial matches)
+  Future<List<User>> searchUsersByEmail(String email) async {
+    try {
+      await _ensurePowerSyncReady();
+      
+      final results = await _powerSync.query(
+        'users',
+        where: 'email = ? OR email LIKE ?',
+        whereArgs: [email, '%$email%'],
+        orderBy: 'CASE WHEN email = ? THEN 0 ELSE 1 END, display_name ASC',
+        limit: 10,
+      );
+
+      return results.map((row) => _mapRowToUser(row)).toList();
+    } catch (e) {
+      print('Error searching users by email: $e');
+      return [];
+    }
+  }
+
   /// Sync user from Supabase auth to local database
   Future<User?> syncUserFromAuth({
-    required String id,
+    required String supabaseId,
     required String email,
     required String displayName,
     String? avatarUrl,
   }) async {
     try {
-      // Check if user already exists
-      final existingUser = await getUserById(id);
+      print('🔄 UserService: Syncing user from auth - $email (Supabase ID: $supabaseId)');
+
+      // Check if user already exists by Supabase ID
+      final existingUser = await getUserBySupabaseId(supabaseId);
 
       if (existingUser != null) {
+        print('✅ UserService: User exists, updating - PowerSync ID: ${existingUser.id}');
+        
         // Update existing user
         final updates = <String, dynamic>{};
         bool needsUpdate = false;
@@ -132,34 +198,23 @@ class UserService {
         }
 
         if (needsUpdate) {
-          return await updateUser(id, updates);
+          print('🔄 UserService: User data changed, updating...');
+          return await updateUser(existingUser.id, updates);
         }
         return existingUser;
       } else {
-        // Create new user
-        final now = DateTime.now();
-        final userData = {
-          'id': id,
-          'email': email,
-          'display_name': displayName,
-          'avatar_url': avatarUrl,
-          'created_at': now.toIso8601String(),
-          'updated_at': now.toIso8601String(),
-        };
-
-        await _powerSync.insert('users', userData);
-
-        return User(
-          id: id,
+        print('🆕 UserService: Creating new user...');
+        
+        // Create new user - PowerSync will auto-generate the ID
+        return await createUser(
+          supabaseId: supabaseId,
           email: email,
           displayName: displayName,
           avatarUrl: avatarUrl,
-          createdAt: now,
-          updatedAt: now,
         );
       }
     } catch (e) {
-      print('Error syncing user from auth: $e');
+      print('❌ UserService: Error syncing user from auth: $e');
       return null;
     }
   }

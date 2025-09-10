@@ -3,8 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../providers/chat_provider.dart';
 import '../../../providers/navigation_provider.dart';
+import '../../../providers/supabase_auth_provider.dart';
 import '../../../models/chat.dart';
 import '../../../screens/chat/create_chat_screen.dart';
+import '../../../services/user_service.dart';
 
 class ChatsSecondarySidebar extends ConsumerWidget {
   const ChatsSecondarySidebar({super.key});
@@ -190,103 +192,142 @@ class ChatsSecondarySidebar extends ConsumerWidget {
 
   Widget _buildChatRoomItem(
       BuildContext context, ThemeData theme, ChatRoom chatRoom, WidgetRef ref) {
-    // Get display name for the chat room
-    String displayName = chatRoom.name ?? 'Unknown Chat';
-    if (chatRoom.roomType == ChatRoomType.direct && chatRoom.name == null) {
-      // For direct chats without a name, we could show participant names
-      displayName = 'Direct Chat';
-    }
-
     // Format last activity time
     String timeAgo =
         _formatTimeAgo(chatRoom.lastMessageAt ?? chatRoom.createdAt);
 
-    return ListTile(
-      leading: Stack(
-        children: [
-          CircleAvatar(
-            radius: 20,
-            backgroundColor: theme.colorScheme.primary,
-            child: Text(
-              displayName.substring(0, 1).toUpperCase(),
-              style: TextStyle(
-                color: theme.colorScheme.onPrimary,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-          // Online indicator for direct chats
-          if (chatRoom.roomType == ChatRoomType.direct)
-            Positioned(
-              right: 0,
-              bottom: 0,
-              child: Container(
-                width: 12,
-                height: 12,
-                decoration: BoxDecoration(
-                  color: Colors.green,
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: theme.colorScheme.surface,
-                    width: 2,
+    return FutureBuilder<String>(
+      future: _getDisplayName(chatRoom, ref),
+      builder: (context, snapshot) {
+        final displayName = snapshot.data ?? chatRoom.name ?? 'Loading...';
+        
+        return ListTile(
+          leading: Stack(
+            children: [
+              CircleAvatar(
+                radius: 20,
+                backgroundColor: theme.colorScheme.primary,
+                child: Text(
+                  displayName.substring(0, 1).toUpperCase(),
+                  style: TextStyle(
+                    color: theme.colorScheme.onPrimary,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
               ),
-            ),
-        ],
-      ),
-      title: Text(
-        displayName,
-        style: theme.textTheme.bodyMedium?.copyWith(
-          fontWeight: FontWeight.normal, // TODO: Add unread logic
-        ),
-      ),
-      subtitle: Text(
-        chatRoom.description ?? 'No recent messages',
-        style: theme.textTheme.bodySmall?.copyWith(
-          color: theme.colorScheme.onSurfaceVariant,
-        ),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-      trailing: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Text(
-            timeAgo,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-              fontSize: 11,
+              // Online indicator for direct chats
+              if (chatRoom.roomType == ChatRoomType.direct)
+                Positioned(
+                  right: 0,
+                  bottom: 0,
+                  child: Container(
+                    width: 12,
+                    height: 12,
+                    decoration: BoxDecoration(
+                      color: Colors.green,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: theme.colorScheme.surface,
+                        width: 2,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          title: Text(
+            displayName,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              fontWeight: FontWeight.normal, // TODO: Add unread logic
             ),
           ),
-          if (chatRoom.messageCount > 0) ...[
-            const SizedBox(height: AppConstants.spacingXS),
-            Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 6,
-                vertical: 2,
-              ),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.primary,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Text(
-                chatRoom.messageCount.toString(),
-                style: TextStyle(
-                  color: theme.colorScheme.onPrimary,
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
+          subtitle: Text(
+            chatRoom.description ?? 'No recent messages',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          trailing: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                timeAgo,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                  fontSize: 11,
                 ),
               ),
-            ),
-          ],
-        ],
-      ),
-      onTap: () {
-        ref.read(chatProvider.notifier).selectChat(chatRoom.id);
+              if (chatRoom.messageCount > 0) ...[
+                const SizedBox(height: AppConstants.spacingXS),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.primary,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    chatRoom.messageCount.toString(),
+                    style: TextStyle(
+                      color: theme.colorScheme.onPrimary,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          onTap: () {
+            ref.read(chatProvider.notifier).selectChat(chatRoom.id);
+          },
+        );
       },
     );
+  }
+
+  /// Helper method to get display name for chat rooms
+  Future<String> _getDisplayName(ChatRoom chatRoom, WidgetRef ref) async {
+    // If chat room has a name, use it
+    if (chatRoom.name != null && chatRoom.name!.isNotEmpty) {
+      return chatRoom.name!;
+    }
+
+    // For direct chats without a name, show participant name
+    if (chatRoom.roomType == ChatRoomType.direct && chatRoom.participantIds.isNotEmpty) {
+      final currentUser = ref.read(authProvider).user;
+      
+      // Find the other participant (not the current user)
+      String? otherParticipantId;
+      for (String participantId in chatRoom.participantIds) {
+        if (currentUser == null || participantId != currentUser.id) {
+          otherParticipantId = participantId;
+          break;
+        }
+      }
+
+      if (otherParticipantId != null) {
+        try {
+          final user = await UserService.instance.getUserById(otherParticipantId);
+          if (user != null) {
+            return user.displayName;
+          }
+        } catch (e) {
+          print('Error getting user for chat display name: $e');
+        }
+      }
+      
+      // Fallback for direct chats
+      return 'Direct Chat';
+    }
+
+    // Default fallback
+    return 'Unknown Chat';
   }
 
   String _formatTimeAgo(DateTime dateTime) {

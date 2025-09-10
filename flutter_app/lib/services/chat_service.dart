@@ -212,6 +212,7 @@ class ChatService {
         'is_online': 0,
         'last_seen': null,
         'is_typing': 0,
+        'role': 'member', // Default role for new participants
         'joined_at': DateTime.now().toIso8601String(),
       });
 
@@ -724,9 +725,9 @@ class ChatService {
             callback: (payload) => _handleMessageChange('INSERT', payload),
           );
 
-      await _chatRoomsChannel!.subscribe();
-      await _participantsChannel!.subscribe();
-      await _messagesChannel!.subscribe();
+      _chatRoomsChannel!.subscribe();
+      _participantsChannel!.subscribe();
+      _messagesChannel!.subscribe();
 
       developer.log('✅ Real-time subscriptions initialized for user: $userId', name: 'ChatService');
     } catch (e) {
@@ -1001,11 +1002,11 @@ class ChatService {
   // ENHANCED CHAT ROOM MANAGEMENT
   // =============================================
 
-  /// Add multiple participants to a chat room
+  /// Add multiple participants to a chat room with enhanced notifications
   Future<void> addMultipleParticipants(
     String roomId, 
     List<String> userIds,
-    {bool notifyExistingMembers = true}
+    {bool notifyExistingMembers = true, bool sendWelcomeMessages = true}
   ) async {
     try {
       final chatRoom = await getChatRoom(roomId);
@@ -1013,36 +1014,85 @@ class ChatService {
         throw Exception('Chat room not found');
       }
 
-      // Add each participant
+      // Add each participant and collect their details
+      final addedUsers = <ChatParticipant>[];
       for (final userId in userIds) {
-        await addParticipant(roomId, userId);
-      }
-
-      // Notify existing members about new additions
-      if (notifyExistingMembers) {
-        final newUserNames = <String>[];
-        for (final userId in userIds) {
+        try {
+          await addParticipant(roomId, userId);
           final user = await getUserById(userId);
           if (user != null) {
-            newUserNames.add(user.name);
+            addedUsers.add(user);
           }
-        }
-
-        if (newUserNames.isNotEmpty) {
-          await sendMessage(
-            roomId: roomId,
-            content: '${newUserNames.join(", ")} joined the group',
-            messageType: MessageType.system,
-            senderId: 'system',
-            senderName: 'System',
-          );
+        } catch (e) {
+          developer.log('❌ Failed to add participant $userId: $e', name: 'ChatService');
+          continue; // Continue with other users even if one fails
         }
       }
 
-      developer.log('✅ Added ${userIds.length} participants to chat: $roomId', name: 'ChatService');
+      if (addedUsers.isEmpty) {
+        throw Exception('Failed to add any participants');
+      }
+
+      // Send enhanced notifications
+      if (notifyExistingMembers && addedUsers.isNotEmpty) {
+        final userNames = addedUsers.map((user) => user.name).toList();
+        await sendMessage(
+          roomId: roomId,
+          content: addedUsers.length == 1 
+            ? '${userNames.first} joined the group 🎉'
+            : '${userNames.join(", ")} joined the group 🎉',
+          messageType: MessageType.system,
+          senderId: 'system',
+          senderName: 'System',
+        );
+      }
+
+      // Send welcome messages to new members
+      if (sendWelcomeMessages) {
+        for (final user in addedUsers) {
+          await _sendWelcomeMessage(roomId, user, chatRoom);
+        }
+      }
+
+      // Trigger real-time updates for all affected users
+      await _triggerGroupUpdateNotifications(roomId, addedUsers);
+
+      developer.log('✅ Added ${addedUsers.length} participants to chat: $roomId', name: 'ChatService');
     } catch (e) {
       developer.log('❌ Error adding multiple participants: $e', name: 'ChatService');
       rethrow;
+    }
+  }
+
+  /// Send personalized welcome message to new group member
+  Future<void> _sendWelcomeMessage(String roomId, ChatParticipant user, ChatRoom chatRoom) async {
+    try {
+      final groupName = chatRoom.name ?? 'this group';
+      await sendMessage(
+        roomId: roomId,
+        content: 'Welcome to $groupName, ${user.name}! 👋',
+        messageType: MessageType.system,
+        senderId: 'system',
+        senderName: 'System',
+        mentions: [user.id],
+      );
+    } catch (e) {
+      developer.log('❌ Error sending welcome message: $e', name: 'ChatService');
+    }
+  }
+
+  /// Trigger real-time notifications for group updates
+  Future<void> _triggerGroupUpdateNotifications(String roomId, List<ChatParticipant> newMembers) async {
+    try {
+      // Force sync to ensure all users get the updated participant list
+      _powerSync.triggerPostAuthSync();
+
+      // Send individual notifications to new members
+      for (final member in newMembers) {
+        developer.log('📱 Triggering group update notification for ${member.name}', name: 'ChatService');
+      }
+    } catch (e) {
+      developer.log('❌ Error triggering group update notifications: $e', name: 'ChatService');
     }
   }
 

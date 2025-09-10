@@ -163,7 +163,7 @@ class AuthNotifier extends StateNotifier<AppAuthState> {
         // Sync user to local database for chat functionality
         try {
           await UserService.instance.syncUserFromAuth(
-            id: user.id,
+            supabaseId: user.id,
             email: user.email,
             displayName: user.displayName,
             avatarUrl: user.avatarUrl,
@@ -252,7 +252,7 @@ class AuthNotifier extends StateNotifier<AppAuthState> {
           // Sync user to local database for chat functionality
           try {
             await UserService.instance.syncUserFromAuth(
-              id: user.id,
+              supabaseId: user.id,
               email: user.email,
               displayName: user.displayName,
               avatarUrl: user.avatarUrl,
