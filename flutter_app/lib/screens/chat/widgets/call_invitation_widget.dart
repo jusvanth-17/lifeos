@@ -205,12 +205,21 @@ class _CallInvitationWidgetState extends ConsumerState<CallInvitationWidget> {
     });
 
     try {
-      await ref.read(chatProvider.notifier).joinCall(sessionId);
+      // Extract call type from aiContext
+      final aiContext = widget.message.aiContext;
+      final callTypeString = aiContext?['callType'] as String?;
+      final callType = callTypeString?.contains('video') == true ? CallType.video : CallType.voice;
+      
+      await ref.read(chatProvider.notifier).joinCall(
+        sessionId, 
+        context: context, 
+        callType: callType,
+      );
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Successfully joined the call!'),
+            content: Text('Joining call...'),
             backgroundColor: Colors.green,
           ),
         );

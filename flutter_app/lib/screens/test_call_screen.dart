@@ -89,7 +89,10 @@ class _TestCallScreenState extends ConsumerState<TestCallScreen> {
       });
       
       // Now initiate the call
-      await ref.read(chatProvider.notifier).initiateCall(CallType.voice);
+      await ref.read(chatProvider.notifier).initiateCall(
+        CallType.voice, 
+        context: context,
+      );
       
       // Check if call state was updated
       final callState = ref.read(callStateProvider);
@@ -131,7 +134,11 @@ class _TestCallScreenState extends ConsumerState<TestCallScreen> {
       });
       
       // Test joining the current call session
-      await ref.read(chatProvider.notifier).joinCall(sessionId);
+      await ref.read(chatProvider.notifier).joinCall(
+        sessionId, 
+        context: context, 
+        callType: CallType.voice,
+      );
       
       final callState = ref.read(callStateProvider);
       setState(() {

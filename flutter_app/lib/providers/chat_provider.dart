@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/material.dart';
 import 'dart:async';
 import 'dart:math';
 import '../models/chat.dart';
@@ -6,6 +7,7 @@ import '../services/chat_service.dart';
 import '../services/power_sync_service.dart';
 import '../services/agora_service.dart';
 import '../providers/supabase_auth_provider.dart';
+import '../screens/chat/widgets/agora_call.dart';
 
 enum CallScreenState {
   none,
@@ -332,7 +334,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     }
   }
 
-  Future<void> initiateCall(CallType callType) async {
+  Future<void> initiateCall(CallType callType, {BuildContext? context}) async {
     if (state.selectedChat == null) return;
 
     final authState = _ref.read(authProvider);
@@ -382,6 +384,20 @@ class ChatNotifier extends StateNotifier<ChatState> {
       await _sendCallInvitation(callSession.sessionId, callType, callSession.participants);
 
       print('✅ Call initiated successfully: ${callSession.sessionId}');
+      
+      // Navigate to video call screen
+      if (context != null && context.mounted) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (context) => CallPage(
+              sessionId: callSession.sessionId,
+              chatRoom: state.selectedChat!,
+              participants: state.participants,
+              callType: callType,
+            ),
+          ),
+        );
+      }
       
     } catch (e) {
       print('❌ Error initiating call: $e');
@@ -508,7 +524,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     );
   }
 
-  Future<void> joinCall(String sessionId) async {
+  Future<void> joinCall(String sessionId, {BuildContext? context, CallType? callType}) async {
     final authState = _ref.read(authProvider);
     final user = authState.user;
     if (user == null) return;
@@ -518,7 +534,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
       state = state.copyWith(
         callState: CallState(
           screenState: CallScreenState.ringing,
-          callType: CallType.voice, // Will be updated with actual call type
+          callType: callType ?? CallType.voice, // Use provided call type or default to voice
           startTime: DateTime.now(),
           participants: state.participants.map((p) => p.id).toList(),
         ),
@@ -551,6 +567,20 @@ class ChatNotifier extends StateNotifier<ChatState> {
       );
 
       print('✅ Successfully joined call: $sessionId');
+      
+      // Navigate to video call screen
+      if (context != null && context.mounted && state.selectedChat != null) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (context) => CallPage(
+              sessionId: sessionId,
+              chatRoom: state.selectedChat!,
+              participants: state.participants,
+              callType: callType ?? CallType.voice,
+            ),
+          ),
+        );
+      }
       
     } catch (e) {
       print('❌ Error joining call: $e');
