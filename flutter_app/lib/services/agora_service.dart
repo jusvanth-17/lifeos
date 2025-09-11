@@ -72,7 +72,7 @@ class AgoraService {
             body: jsonEncode({
               'user_id': userId,
               'credential': {
-                'id': 'mock_credential_${userId}',
+                'id': 'mock_credential_$userId',
                 'type': 'public-key'
               },
             }),
@@ -104,7 +104,7 @@ class AgoraService {
           body: jsonEncode({
             'email': email,
             'credential': {
-              'id': 'mock_credential_${userId}',
+              'id': 'mock_credential_$userId',
               'type': 'public-key'
             },
           }),

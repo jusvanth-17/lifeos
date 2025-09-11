@@ -149,7 +149,7 @@ class _CallInvitationWidgetState extends ConsumerState<CallInvitationWidget> {
                     ),
                     const SizedBox(width: 8),
                     ElevatedButton.icon(
-                      onPressed: _isJoining ? null : () => _joinCall(sessionId!),
+                      onPressed: _isJoining ? null : () => _joinCall(sessionId),
                       icon: _isJoining 
                         ? const SizedBox(
                             width: 16,

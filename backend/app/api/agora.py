@@ -22,7 +22,7 @@ class TokenRequest(BaseModel):
     channel_name: str
     uid: Optional[int] = 0
     role: Optional[str] = "publisher"  # publisher or attendee
-    expiry_time: Optional[int] = 3600  # Token expiry in seconds (default: 1 hour)
+    expiry_time: Optional[int] = 86400  # Token expiry in seconds (default: 1 day)
 
 class TokenResponse(BaseModel):
     token: str
