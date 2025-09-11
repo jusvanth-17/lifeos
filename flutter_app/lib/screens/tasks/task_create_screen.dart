@@ -198,7 +198,7 @@ class _TaskCreateScreenState extends ConsumerState<TaskCreateScreen> {
                       ),
                       const SizedBox(height: AppConstants.spacingS),
                       DropdownButtonFormField<TaskPriority>(
-                        initialValue: _selectedPriority,
+                        value: _selectedPriority,
                         decoration: const InputDecoration(
                           border: OutlineInputBorder(),
                           contentPadding: EdgeInsets.symmetric(
@@ -249,7 +249,7 @@ class _TaskCreateScreenState extends ConsumerState<TaskCreateScreen> {
                       ),
                       const SizedBox(height: AppConstants.spacingS),
                       DropdownButtonFormField<TaskStatus>(
-                        initialValue: _selectedStatus,
+                        value: _selectedStatus,
                         decoration: const InputDecoration(
                           border: OutlineInputBorder(),
                           contentPadding: EdgeInsets.symmetric(

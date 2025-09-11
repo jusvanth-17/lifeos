@@ -795,7 +795,7 @@ Build comprehensive notification system for lifeOS with multiple delivery channe
     final assignees = <String>{};
     for (final task in _mockTasks) {
       for (final assignment in task.questTeam) {
-        assignees.add(assignment.userName);
+        assignees.add(assignment.userName!);
       }
     }
     return assignees.toList()..sort();
